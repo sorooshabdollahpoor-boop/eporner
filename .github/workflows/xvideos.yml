@@ -55,10 +55,9 @@ jobs:
             fi
           done
 
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add downloads || true
-          git commit -m "Add XVideos download" || echo "Nothing to commit"
-          git push
+      - name: Upload video as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xvideos-download
+          path: downloads/
+          retention-days: 2
