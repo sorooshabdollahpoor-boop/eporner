@@ -1,53 +1,151 @@
-name: XVideos to Pages
+name: XVideos downloader
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: "Video URL"
+        description: "XVideos video URL"
         required: true
         type: string
+
+      output_folder:
+        description: "Folder to save files"
+        required: false
+        type: string
+        default: "downloads"
+
+      quality:
+        description: "yt-dlp format selector"
+        required: true
+        type: string
+        default: "best[ext=mp4]/best"
+
+      archive_name:
+        description: "Base name for split archive"
+        required: false
+        type: string
+        default: "video"
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  download-and-upload:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install tools
-        run: |
-          sudo apt update
-          sudo apt install -y yt-dlp ffmpeg
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-      - name: Download video
+      - name: Install dependencies
         run: |
-          mkdir video
+          python -m pip install --upgrade pip
+          pip install yt-dlp
+
+          sudo apt-get update
+          sudo apt-get install -y \
+            ffmpeg \
+            rar \
+            bc
+
+      - name: Create download folder
+        run: |
+          mkdir -p "${{ github.event.inputs.output_folder }}"
+
+      - name: Download XVideos video
+        id: download
+        shell: bash
+        run: |
+          set -x
+
+          FOLDER="${{ github.event.inputs.output_folder }}"
+
           yt-dlp \
-          --no-playlist \
-          -o "video/video.%(ext)s" \
-          "${{ github.event.inputs.url }}"
+            --no-progress \
+            --newline \
+            --force-ipv4 \
+            --merge-output-format mp4 \
+            --format "${{ github.event.inputs.quality }}" \
+            --output "./$FOLDER/%(title)s-%(id)s.%(ext)s" \
+            "${{ github.event.inputs.url }}"
 
-      - name: Split video
-        run: |
-          mkdir public
-          FILE=$(find video -type f | head -n 1)
-          split -b 95M "$FILE" public/video.part.
+          FILE=$(find "$FOLDER" -type f | head -n 1)
 
-      - name: Create index
+          if [ -z "$FILE" ]; then
+            echo "Download failed"
+            exit 1
+          fi
+
+          SIZE_BYTES=$(stat -c %s "$FILE")
+          FILENAME=$(basename "$FILE")
+
+          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
+          echo "size_bytes=$SIZE_BYTES" >> $GITHUB_OUTPUT
+
+      - name: Split large files
+        shell: bash
         run: |
-          echo "<h2>Video Parts</h2>" > public/index.html
-          for f in public/video.part.*; do
-            name=$(basename $f)
-            echo "<a href=\"$name\">$name</a><br>" >> public/index.html
+          set -x
+
+          FOLDER="${{ github.event.inputs.output_folder }}"
+          FILE="$FOLDER/${{ steps.download.outputs.filename }}"
+          SIZE_BYTES="${{ steps.download.outputs.size_bytes }}"
+
+          SIZE_MB=$(echo "scale=2; $SIZE_BYTES / 1048576" | bc)
+
+          cd "$FOLDER"
+
+          if (( $(echo "$SIZE_MB > 99" | bc -l) )); then
+
+            RANDOM_HEX=$(openssl rand -hex 3)
+
+            ARCHIVE_NAME="${{ github.event.inputs.archive_name }}_${RANDOM_HEX}"
+
+            rar a -v95m -m0 -ep1 "${ARCHIVE_NAME}.rar" "${{ steps.download.outputs.filename }}"
+
+            rm "${{ steps.download.outputs.filename }}"
+
+            echo "Split completed"
+
+          else
+            echo "No split needed"
+          fi
+
+          ls -lah
+
+      - name: Generate links list
+        shell: bash
+        run: |
+          set -x
+
+          FOLDER="${{ github.event.inputs.output_folder }}"
+
+          REPO="${{ github.repository }}"
+          BRANCH="${{ github.ref_name }}"
+
+          rm -f "$FOLDER/links.txt"
+
+          for file in $(ls "$FOLDER"); do
+            echo "https://raw.githack.com/$REPO/$BRANCH/$FOLDER/$file" >> "$FOLDER/links.txt"
           done
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./public
+          cat "$FOLDER/links.txt"
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -x
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add .
+
+          git commit -m "Add XVideos download" || echo "Nothing to commit"
+
+          git push
