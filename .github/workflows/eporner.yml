@@ -1,0 +1,65 @@
+name: Download from Eporner
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Eporner video URL"
+        required: true
+      filename:
+        description: "Optional output filename (without extension)"
+        required: false
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg rar bc
+          python3 -m pip install -U yt-dlp
+
+      - name: Normalize URL
+        run: |
+          URL="${{ github.event.inputs.url }}"
+          URL="${URL/www.eporner.com/m.eporner.com}"
+          echo "URL=$URL" >> $GITHUB_ENV
+
+      - name: Download video
+        run: |
+          mkdir -p downloads
+          yt-dlp \
+            --user-agent "Mozilla/5.0 (Linux; Android 11; Mobile)" \
+            --retries 10 \
+            --fragment-retries 10 \
+            --sleep-requests 2 \
+            --merge-output-format mp4 \
+            -o "downloads/%(title).200s.%(ext)s" \
+            "$URL"
+
+      - name: Split large files (>95MB)
+        run: |
+          cd downloads
+          for f in *.mp4; do
+            if [ -f "$f" ]; then
+              SIZE=$(stat -c%s "$f")
+              if [ "$SIZE" -gt 95000000 ]; then
+                rar a -v95m "${f}.rar" "$f"
+                rm "$f"
+              fi
+            fi
+          done
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add downloads || true
+          git commit -m "Add downloaded video" || echo "Nothing to commit"
+          git push
