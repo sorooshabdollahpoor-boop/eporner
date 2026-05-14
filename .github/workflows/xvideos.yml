@@ -1,4 +1,4 @@
-name: XVideos Downloader
+name: XVideos Downloader (Split Release)
 
 on:
   workflow_dispatch:
@@ -12,35 +12,50 @@ permissions:
   contents: write
 
 jobs:
-  download:
+  download-and-release:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install yt-dlp and ffmpeg
+      - name: Install tools
         run: |
           sudo apt update
-          sudo apt install -y yt-dlp ffmpeg
+          sudo apt install -y yt-dlp ffmpeg coreutils
 
-      - name: Create downloads folder
-        run: mkdir -p downloads
+      - name: Create folders
+        run: |
+          mkdir -p downloads
+          mkdir -p parts
 
       - name: Download video
         run: |
           yt-dlp \
             --no-playlist \
-            -o "downloads/%(title)s.%(ext)s" \
+            -o "downloads/video.%(ext)s" \
             "${{ github.event.inputs.url }}"
 
-      - name: Commit and push video
+      - name: Find downloaded file
+        id: file
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          FILE=$(find downloads -type f | head -n 1)
+          echo "filepath=$FILE" >> $GITHUB_OUTPUT
 
-          git add downloads/
+      - name: Split into 90MB parts
+        run: |
+          split -b 90M \
+            "${{ steps.file.outputs.filepath }}" \
+            "parts/video.part."
 
-          git commit -m "Add downloaded video" || echo "Nothing to commit"
+      - name: List parts
+        run: ls -lh parts
 
-          git push
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: split-${{ github.run_id }}
+          name: "Split Video ${{ github.run_id }}"
+          files: parts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
