@@ -1,10 +1,10 @@
-name: XVideos Downloader
+name: XVideos to Pages
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: "XVideos video URL"
+        description: "Video URL"
         required: true
         type: string
 
@@ -12,62 +12,42 @@ permissions:
   contents: write
 
 jobs:
-  download-and-release:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Install tools
         run: |
           sudo apt update
-          sudo apt install -y yt-dlp ffmpeg coreutils
-
-      - name: Create folders
-        run: |
-          mkdir -p downloads
-          mkdir -p parts
+          sudo apt install -y yt-dlp ffmpeg
 
       - name: Download video
         run: |
+          mkdir video
           yt-dlp \
-            --no-playlist \
-            -o "downloads/video.%(ext)s" \
-            "${{ github.event.inputs.url }}"
+          --no-playlist \
+          -o "video/video.%(ext)s" \
+          "${{ github.event.inputs.url }}"
 
-      - name: Find downloaded file
-        id: file
+      - name: Split video
         run: |
-          FILE=$(find downloads -type f | head -n 1)
-          echo "filepath=$FILE" >> $GITHUB_OUTPUT
+          mkdir public
+          FILE=$(find video -type f | head -n 1)
+          split -b 95M "$FILE" public/video.part.
 
-      - name: Split into 95MB parts
+      - name: Create index
         run: |
-          split -b 95M \
-            "${{ steps.file.outputs.filepath }}" \
-            "parts/video.part."
+          echo "<h2>Video Parts</h2>" > public/index.html
+          for f in public/video.part.*; do
+            name=$(basename $f)
+            echo "<a href=\"$name\">$name</a><br>" >> public/index.html
+          done
 
-      - name: Create Release
-        id: release
-        uses: softprops/action-gh-release@v2
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          tag_name: split-${{ github.run_id }}
-          name: "Split Video ${{ github.run_id }}"
-          files: parts/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Save release link
-        run: |
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/split-${{ github.run_id }}"
-          echo "$(date) -> $RELEASE_URL" >> downloads/history.txt
-
-      - name: Commit history
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add downloads/history.txt
-          git commit -m "Add release link"
-          git push
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
