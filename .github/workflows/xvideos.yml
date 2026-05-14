@@ -1,0 +1,64 @@
+name: Download from XVideos
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "XVideos video URL"
+        required: true
+      filename:
+        description: "Optional output filename (without extension)"
+        required: false
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg rar
+          python3 -m pip install -U yt-dlp
+
+      - name: Download video
+        run: |
+          mkdir -p downloads
+
+          if [ -n "${{ github.event.inputs.filename }}" ]; then
+            OUTPUT="downloads/${{ github.event.inputs.filename }}.%(ext)s"
+          else
+            OUTPUT="downloads/%(title).200s.%(ext)s"
+          fi
+
+          yt-dlp \
+            --no-playlist \
+            --merge-output-format mp4 \
+            -f "bestvideo+bestaudio/best" \
+            -o "$OUTPUT" \
+            "${{ github.event.inputs.url }}"
+
+      - name: Split files larger than 95MB
+        run: |
+          cd downloads
+          for f in *.mp4; do
+            if [ -f "$f" ]; then
+              SIZE=$(stat -c%s "$f")
+              if [ "$SIZE" -gt 95000000 ]; then
+                rar a -v95m "${f}.rar" "$f"
+                rm "$f"
+              fi
+            fi
+          done
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add downloads || true
+          git commit -m "Add XVideos download" || echo "Nothing to commit"
+          git push
