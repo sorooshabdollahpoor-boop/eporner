@@ -1,4 +1,4 @@
-name: Download from XVideos
+name: XVideos Downloader
 
 on:
   workflow_dispatch:
@@ -6,58 +6,41 @@ on:
       url:
         description: "XVideos video URL"
         required: true
-      filename:
-        description: "Optional output filename (without extension)"
-        required: false
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   download:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install yt-dlp and ffmpeg
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg rar
-          python3 -m pip install -U yt-dlp
+          sudo apt install -y yt-dlp ffmpeg
+
+      - name: Create downloads folder
+        run: mkdir -p downloads
 
       - name: Download video
         run: |
-          mkdir -p downloads
-
-          if [ -n "${{ github.event.inputs.filename }}" ]; then
-            OUTPUT="downloads/${{ github.event.inputs.filename }}.%(ext)s"
-          else
-            OUTPUT="downloads/%(title).200s.%(ext)s"
-          fi
-
           yt-dlp \
             --no-playlist \
-            --merge-output-format mp4 \
-            -f "bestvideo+bestaudio/best" \
-            -o "$OUTPUT" \
+            -o "downloads/%(title)s.%(ext)s" \
             "${{ github.event.inputs.url }}"
 
-      - name: Split files larger than 95MB
+      - name: Commit and push video
         run: |
-          cd downloads
-          for f in *.mp4; do
-            if [ -f "$f" ]; then
-              SIZE=$(stat -c%s "$f")
-              if [ "$SIZE" -gt 95000000 ]; then
-                rar a -v95m "${f}.rar" "$f"
-                rm "$f"
-              fi
-            fi
-          done
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Upload video as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: xvideos-download
-          path: downloads/
-          retention-days: 2
+          git add downloads/
+
+          git commit -m "Add downloaded video" || echo "Nothing to commit"
+
+          git push
