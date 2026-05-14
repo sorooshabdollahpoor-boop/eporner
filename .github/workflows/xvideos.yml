@@ -1,4 +1,4 @@
-name: XVideos Downloader (Split Release)
+name: XVideos Downloader
 
 on:
   workflow_dispatch:
@@ -42,16 +42,14 @@ jobs:
           FILE=$(find downloads -type f | head -n 1)
           echo "filepath=$FILE" >> $GITHUB_OUTPUT
 
-      - name: Split into 90MB parts
+      - name: Split into 95MB parts
         run: |
-          split -b 90M \
+          split -b 95M \
             "${{ steps.file.outputs.filepath }}" \
             "parts/video.part."
 
-      - name: List parts
-        run: ls -lh parts
-
       - name: Create Release
+        id: release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: split-${{ github.run_id }}
@@ -59,3 +57,17 @@ jobs:
           files: parts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save release link
+        run: |
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/split-${{ github.run_id }}"
+          echo "$(date) -> $RELEASE_URL" >> downloads/history.txt
+
+      - name: Commit history
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add downloads/history.txt
+          git commit -m "Add release link"
+          git push
