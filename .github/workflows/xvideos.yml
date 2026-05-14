@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: "XVideos video URL"
+        description: "XVideos URL"
         required: true
         type: string
 
@@ -34,6 +34,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -44,25 +45,18 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          sudo apt-get update
+          sudo apt-get install -y rar bc ffmpeg
           pip install yt-dlp
 
-          sudo apt-get update
-          sudo apt-get install -y \
-            ffmpeg \
-            rar \
-            bc
-
-      - name: Create download folder
+      - name: Create folder
         run: |
           mkdir -p "${{ github.event.inputs.output_folder }}"
 
-      - name: Download XVideos video
+      - name: Download video
         id: download
-        shell: bash
         run: |
           set -x
-
           FOLDER="${{ github.event.inputs.output_folder }}"
 
           yt-dlp \
@@ -75,76 +69,55 @@ jobs:
             "${{ github.event.inputs.url }}"
 
           FILE=$(find "$FOLDER" -type f | head -n 1)
-
-          if [ -z "$FILE" ]; then
-            echo "Download failed"
-            exit 1
-          fi
-
           SIZE_BYTES=$(stat -c %s "$FILE")
           FILENAME=$(basename "$FILE")
 
           echo "filename=$FILENAME" >> $GITHUB_OUTPUT
           echo "size_bytes=$SIZE_BYTES" >> $GITHUB_OUTPUT
 
-      - name: Split large files
-        shell: bash
+      - name: Split if needed
         run: |
           set -x
 
           FOLDER="${{ github.event.inputs.output_folder }}"
-          FILE="$FOLDER/${{ steps.download.outputs.filename }}"
+          FILENAME="${{ steps.download.outputs.filename }}"
+          FILE="$FOLDER/$FILENAME"
           SIZE_BYTES="${{ steps.download.outputs.size_bytes }}"
 
-          SIZE_MB=$(echo "scale=2; $SIZE_BYTES / 1048576" | bc)
+          SIZE_MB=$(echo "$SIZE_BYTES / 1048576" | bc)
 
           cd "$FOLDER"
 
-          if (( $(echo "$SIZE_MB > 99" | bc -l) )); then
-
+          if (( SIZE_MB > 99 )); then
             RANDOM_HEX=$(openssl rand -hex 3)
+            ARCHIVE="${{ github.event.inputs.archive_name }}_${RANDOM_HEX}"
 
-            ARCHIVE_NAME="${{ github.event.inputs.archive_name }}_${RANDOM_HEX}"
+            rar a -v95m -m0 "${ARCHIVE}.rar" "$FILENAME"
 
-            rar a -v95m -m0 -ep1 "${ARCHIVE_NAME}.rar" "${{ steps.download.outputs.filename }}"
-
-            rm "${{ steps.download.outputs.filename }}"
-
-            echo "Split completed"
+            rm "$FILENAME"      # ←←← مهم‌ترین بخش برای جلوگیری از خطای GitHub
 
           else
-            echo "No split needed"
+            echo "No split required"
           fi
 
-          ls -lah
-
-      - name: Generate links list
-        shell: bash
+      - name: Generate links.txt
         run: |
-          set -x
-
           FOLDER="${{ github.event.inputs.output_folder }}"
-
           REPO="${{ github.repository }}"
           BRANCH="${{ github.ref_name }}"
 
           rm -f "$FOLDER/links.txt"
 
-          for file in $(ls "$FOLDER"); do
-            echo "https://raw.githack.com/$REPO/$BRANCH/$FOLDER/$file" >> "$FOLDER/links.txt"
+          for f in $(ls "$FOLDER"); do
+            echo "https://raw.githack.com/$REPO/$BRANCH/$FOLDER/$f" >> "$FOLDER/links.txt"
           done
 
-          cat "$FOLDER/links.txt"
-
       - name: Commit and push
-        shell: bash
         run: |
-          set -x
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add .
+          git add downloads/
 
           git commit -m "Add XVideos download" || echo "Nothing to commit"
 
